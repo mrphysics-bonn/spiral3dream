@@ -135,7 +135,7 @@ eff_Nz = Nz//Rz
 contrasts = 2 # number of contrasts (DREAM: STE/ STE* and FID)
 
 # fatsat/water excitation parameters
-fw_shift = 3.3e-6 # unsigned fat water shift [ppm]
+fw_shift = 3.3e-6 # unsigned fat water shift [1/s]
 fw_shift_b0 = -1 * int(B0*system.gamma*fw_shift) # fat water shit for specific B0
 
 if eff_intl%1 != 0:
@@ -297,8 +297,8 @@ for k in range(Nintl):
     area_y = sp_y.sum()*system.grad_raster_time
 
     # calculate rephasers and make gradients
-    amp_x, ftop_x, ramp_x = ph.trap_from_area(-area_x, system, slewrate = 100) # reduce slew rate to 100 T/m/s to avoid stimulation
-    amp_y, ftop_y, ramp_y = ph.trap_from_area(-area_y, system, slewrate = 100)
+    amp_x, ftop_x, ramp_x = ph.trap_from_area(-area_x, system, slewrate = min(100,max_slew)) # reduce slew rate to 100 T/m/s to avoid stimulation
+    amp_y, ftop_y, ramp_y = ph.trap_from_area(-area_y, system, slewrate = min(100,max_slew))
     spirals[k]['reph'][0] = make_trapezoid(channel='x', system=system, amplitude=amp_x, duration=2*ramp_x+ftop_x, rise_time=ramp_x)
     spirals[k]['reph'][1] = make_trapezoid(channel='y', system=system, amplitude=amp_y, duration=2*ramp_y+ftop_y, rise_time=ramp_y)
     reph_dur.append(max(ftop_x+2*ramp_x, ftop_y+2*ramp_y))
@@ -312,12 +312,12 @@ phase_areas, phase_enc_steps = pe.CentricOrder(N=eff_Nz, fov=fov*1e-3, Rpe=Rz)  
 
 # calculate maximum gz prephaser duration
 max_area_gzpre = np.max(abs(phase_areas+gz_rew.area+gm1_area))
-amp_gz_pre, ftop_gz_pre, ramp_gz_pre = ph.trap_from_area(max_area_gzpre, system, slewrate=120)
+amp_gz_pre, ftop_gz_pre, ramp_gz_pre = ph.trap_from_area(max_area_gzpre, system, slewrate=min(120,max_slew))
 gz_pre = make_trapezoid(channel='z', system=system, amplitude=amp_gz_pre, duration=2*ramp_gz_pre+ftop_gz_pre, rise_time=ramp_gz_pre)
 max_dur_gz_pre = calc_duration(gz_pre)
 
 # Calculate minimum TE_ste
-min_TE_ste = gz.fall_time + gz.flat_time/2 + max_dur_gz_pre # [s]
+min_TE_ste = exc_to_rew + max_dur_gz_pre # [s]
 if min_TE_ste > TE_ste:
     min_TE_ste = ph.round_up_to_raster(min_TE_ste, decimals=5)*1e3
     raise ValueError('TE_ste has to be at least {} ms'.format(min_TE_ste)) 
@@ -374,7 +374,7 @@ te_fid_delay = make_delay(d=te_fid_delay)
 if max(reph_dur) > calc_duration(gz_spoil):
     gz_spoil = make_trapezoid(channel='z', system=system, area=gz_spoil.area, duration=max(reph_dur))
 max_dur_gzreph = calc_duration(gz_spoil)
-min_TR = rf.delay + gz.flat_time/2 + TE_fid + adc_delay.delay + max_dur_gzreph # [s]
+min_TR = rf.delay + gz.flat_time/2 + TE_fid + adc_delay.delay + max_dur_gzreph + tau_bin # [s]
 if TR < min_TR:
         raise ValueError('Minimum TR is {} ms.'.format(min_TR*1e3))
 tr_delay = make_delay(d=TR-min_TR)
@@ -385,10 +385,8 @@ if meas_date is None:
     meas_date = datetime.date.today().strftime('%Y%m%d')
 filename = meas_date + '_' + seq_name
 
-# create new directory if needed
-mrd_file = "metadata.h5"
-
 # set up protocol file and create header
+mrd_file = "metadata.h5"
 if os.path.exists(mrd_file):
     raise ValueError("Protocol name already exists. Choose different name")
 prot = ismrmrd.Dataset(mrd_file)
@@ -403,7 +401,7 @@ create_hdr(hdr, params_hdr)
 
 # append dream array for B1 map calculation (with global filter)
 ste_ix = 0 # always STE first
-dream = np.array([ste_ix,flip_angle_ste,TR,flip_angle,prepscans,t1])
+dream = np.array([ste_ix,flip_angle_ste,TR,flip_angle,prepscans,t1,TM,tau_bin])
 prot.append_array('dream', dream)
 
 # append array for B0 mapping
